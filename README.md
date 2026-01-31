@@ -24,12 +24,12 @@ Every time you commit, files tagged with `#safe` are silently backed up.
 
 ```bash
 # Clone and install
-git clone https://github.com/stefano/safe.gitignore.git
+git clone https://github.com/sstraus/safe.gitignore.git
 cd safe.gitignore
 ./install.sh --local
 
-# Or one-liner from GitHub (once published)
-# curl -fsSL https://raw.githubusercontent.com/stefano/safe.gitignore/main/install.sh | bash
+# Or one-liner from GitHub
+# curl -fsSL https://raw.githubusercontent.com/sstraus/safe.gitignore/main/install.sh | bash
 ```
 
 Make sure `~/.local/bin` is in your PATH:
@@ -40,38 +40,46 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Quick Start
 
+### One-time setup (global config)
+
 1. **Create a private backup repository** on GitHub/GitLab/etc.
 
-2. **Initialize safe-gitignore in your project:**
+2. **Initialize global config:**
    ```bash
-   cd your-project
-   safe-gitignore init
+   safe-gitignore config --init
    ```
 
-3. **Edit `.safe-gitignore.conf`:**
-   ```ini
-   SAFE_REMOTE=git@github.com:yourusername/secrets-backup.git
+3. **Edit the global config:**
+   ```bash
+   safe-gitignore config --edit
+   # Set SAFE_REMOTE to your backup repo URL
    ```
 
-4. **Tag files in your `.gitignore`:**
+### Per-project setup
+
+1. **Tag files in your `.gitignore`:**
    ```gitignore
    .env #safe
    config/database.yml #safe
    credentials.json #safe
    ```
 
-5. **Install the hook:**
+2. **Install the hook:**
    ```bash
+   cd your-project
    safe-gitignore install
    ```
 
-6. **Done!** Files are backed up automatically on every commit.
+3. **Done!** Files are backed up automatically on every commit.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `safe-gitignore init` | Create config file in current project |
+| `safe-gitignore config --init` | Create global config file |
+| `safe-gitignore config --edit` | Edit global config |
+| `safe-gitignore config` | Show global config status |
+| `safe-gitignore init` | Create local config (optional, overrides global) |
 | `safe-gitignore install` | Install post-commit hook |
 | `safe-gitignore uninstall` | Remove post-commit hook |
 | `safe-gitignore status` | Show files that would be backed up |
@@ -80,18 +88,35 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## Configuration
 
-Create `.safe-gitignore.conf` in your project root:
+### Global Config (recommended)
+
+Set once, use in all projects:
+
+```bash
+safe-gitignore config --init
+safe-gitignore config --edit
+```
+
+Location: `~/.config/safe-gitignore/config`
 
 ```ini
 # Required: URL of your private backup repository
 SAFE_REMOTE=git@github.com:username/secrets-backup.git
 
-# Optional: Project name in backup repo (default: directory name)
-SAFE_PROJECT_NAME=my-project
-
 # Optional: Custom commit message
-# Variables: $PROJECT, $DATE, $FILES
 SAFE_COMMIT_MSG="Backup $PROJECT: $DATE"
+```
+
+### Local Config (optional)
+
+Override global settings for a specific project by creating `.safe-gitignore.conf` in the project root:
+
+```ini
+# Override remote for this project only
+SAFE_REMOTE=git@github.com:username/different-backup.git
+
+# Project name in backup repo (default: directory name)
+SAFE_PROJECT_NAME=my-project
 ```
 
 ## Backup Repository Structure
@@ -151,6 +176,11 @@ ssh -T git@github.com
 
 # Manual backup with verbose output
 safe-gitignore backup
+```
+
+**Check config:**
+```bash
+safe-gitignore config  # Show global config
 ```
 
 ## Uninstall

@@ -21,6 +21,7 @@ fi
 
 # Configuration
 CONFIG_FILE=".safe-gitignore.conf"
+GLOBAL_CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/safe-gitignore/config"
 SAFE_TAG="#safe"
 
 # Logging functions
@@ -57,29 +58,41 @@ get_git_root() {
     git rev-parse --show-toplevel
 }
 
-# Check if config file exists
+# Check if config file exists (local or global)
 has_config() {
     local git_root
     git_root=$(get_git_root)
-    [[ -f "${git_root}/${CONFIG_FILE}" ]]
+    [[ -f "${git_root}/${CONFIG_FILE}" ]] || [[ -f "$GLOBAL_CONFIG_FILE" ]]
 }
 
-# Read a config value
+# Check if global config exists
+has_global_config() {
+    [[ -f "$GLOBAL_CONFIG_FILE" ]]
+}
+
+# Read a config value (local overrides global)
 read_config() {
     local key="$1"
     local default="${2:-}"
     local git_root
     git_root=$(get_git_root)
-    local config_path="${git_root}/${CONFIG_FILE}"
+    local local_config="${git_root}/${CONFIG_FILE}"
+    local value=""
 
-    if [[ -f "$config_path" ]]; then
-        # Source the config file and echo the value
-        # Use set +u to allow unset variables in config (like $DATE template)
+    # First try local config
+    if [[ -f "$local_config" ]]; then
         # shellcheck disable=SC1090
-        (set +u; source "$config_path" && eval "echo \${${key}:-${default}}")
-    else
-        echo "$default"
+        value=$(set +u; source "$local_config" && eval "echo \${${key}:-}")
     fi
+
+    # If not found locally, try global config
+    if [[ -z "$value" ]] && [[ -f "$GLOBAL_CONFIG_FILE" ]]; then
+        # shellcheck disable=SC1090
+        value=$(set +u; source "$GLOBAL_CONFIG_FILE" && eval "echo \${${key}:-}")
+    fi
+
+    # Return value or default
+    echo "${value:-$default}"
 }
 
 # Parse .gitignore and extract patterns tagged with #safe

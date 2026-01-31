@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Find the script's directory to source common.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,12 +35,19 @@ COMMANDS:
     uninstall   Remove post-commit hook from current repository
     status      Show files that would be backed up (dry run)
     backup      Manually trigger a backup
+    config      Manage global configuration
     version     Show version information
     help        Show this help message
 
 CONFIGURATION:
-    Create .safe-gitignore.conf in your project root:
+    Global config (~/.config/safe-gitignore/config):
+        Set SAFE_REMOTE once, use in all projects automatically.
+        Run 'safe-gitignore config --init' to create.
 
+    Local config (.safe-gitignore.conf in project root):
+        Overrides global config for this project only.
+
+    Config options:
         SAFE_REMOTE=git@github.com:username/secrets-backup.git
         SAFE_PROJECT_NAME=my-project  # optional
         SAFE_COMMIT_MSG="Backup \$PROJECT: \$DATE"  # optional
@@ -53,10 +60,12 @@ GITIGNORE SYNTAX:
         *.key #safe
 
 EXAMPLES:
-    # Set up in a new project
+    # Set up global config (once)
+    safe-gitignore config --init
+    # Edit ~/.config/safe-gitignore/config with your backup repo URL
+
+    # Then in any project, just install the hook
     cd my-project
-    safe-gitignore init
-    # Edit .safe-gitignore.conf with your backup repo URL
     safe-gitignore install
 
     # Check what would be backed up
@@ -69,11 +78,101 @@ For more information, visit: https://github.com/stefano/safe.gitignore
 EOF
 }
 
+cmd_config() {
+    local action="${1:-show}"
+
+    case "$action" in
+        --init|-i)
+            # Create global config
+            local config_dir
+            config_dir=$(dirname "$GLOBAL_CONFIG_FILE")
+            mkdir -p "$config_dir"
+
+            if [[ -f "$GLOBAL_CONFIG_FILE" ]]; then
+                log_warn "Global config already exists: ${GLOBAL_CONFIG_FILE}"
+                echo "Edit it manually or delete it to reinitialize."
+                return 1
+            fi
+
+            cat > "$GLOBAL_CONFIG_FILE" << 'EOF'
+# safe-gitignore global configuration
+# This config applies to ALL projects unless overridden locally
+# See: https://github.com/sstraus/safe.gitignore
+
+# REQUIRED: Remote repository URL for backups (SSH recommended)
+# Create a PRIVATE repository first, then set its URL here
+SAFE_REMOTE=git@github.com:YOUR_USERNAME/YOUR_REPO.git
+
+# OPTIONAL: Custom commit message template
+# Available variables: $PROJECT, $DATE, $FILES
+# SAFE_COMMIT_MSG="Backup $PROJECT: $DATE"
+EOF
+
+            log_success "Created global config: ${GLOBAL_CONFIG_FILE}"
+            echo ""
+            echo "Next steps:"
+            echo "  1. Create a PRIVATE repository for your backups"
+            echo "  2. Edit ${GLOBAL_CONFIG_FILE}"
+            echo "  3. Set SAFE_REMOTE to your backup repo URL"
+            echo ""
+            echo "Then in any project:"
+            echo "  safe-gitignore install"
+            ;;
+
+        --edit|-e)
+            # Open config in editor
+            if [[ ! -f "$GLOBAL_CONFIG_FILE" ]]; then
+                die "No global config found. Run 'safe-gitignore config --init' first."
+            fi
+            "${EDITOR:-vi}" "$GLOBAL_CONFIG_FILE"
+            ;;
+
+        --path|-p)
+            echo "$GLOBAL_CONFIG_FILE"
+            ;;
+
+        show|--show)
+            echo "Global config: ${GLOBAL_CONFIG_FILE}"
+            if [[ -f "$GLOBAL_CONFIG_FILE" ]]; then
+                echo "Status: exists"
+                echo ""
+                echo "Contents:"
+                grep -v "^#" "$GLOBAL_CONFIG_FILE" | grep -v "^$" | sed 's/^/  /'
+            else
+                echo "Status: not found"
+                echo ""
+                echo "Run 'safe-gitignore config --init' to create."
+            fi
+            ;;
+
+        *)
+            log_error "Unknown config action: ${action}"
+            echo "Usage: safe-gitignore config [--init|--edit|--path|--show]"
+            exit 1
+            ;;
+    esac
+}
+
 cmd_init() {
     require_git_repo
     local git_root
     git_root=$(get_git_root)
     local config_path="${git_root}/${CONFIG_FILE}"
+
+    # Check if global config exists and has SAFE_REMOTE
+    if has_global_config; then
+        local global_remote
+        global_remote=$(set +u; source "$GLOBAL_CONFIG_FILE" && echo "${SAFE_REMOTE:-}")
+        if [[ -n "$global_remote" ]] && [[ "$global_remote" != *"YOUR_USERNAME"* ]]; then
+            log_info "Using global config for SAFE_REMOTE"
+            echo "Global remote: ${global_remote}"
+            echo ""
+            echo "No local config needed. Just run 'safe-gitignore install'"
+            echo ""
+            echo "To override for this project, create ${CONFIG_FILE} manually."
+            return 0
+        fi
+    fi
 
     if [[ -f "$config_path" ]]; then
         log_warn "Configuration file already exists: ${config_path}"
@@ -82,18 +181,18 @@ cmd_init() {
     fi
 
     cat > "$config_path" << 'EOF'
-# safe-gitignore configuration
-# See: https://github.com/stefano/safe.gitignore
+# safe-gitignore local configuration (overrides global)
+# See: https://github.com/sstraus/safe.gitignore
 
-# REQUIRED: Remote repository URL for backups (SSH recommended)
-# Create a PRIVATE repository first, then set its URL here
-SAFE_REMOTE=git@github.com:YOUR_USERNAME/YOUR_REPO.git
+# Remote repository URL for backups (SSH recommended)
+# Leave commented to use global config
+# SAFE_REMOTE=git@github.com:YOUR_USERNAME/YOUR_REPO.git
 
-# OPTIONAL: Project name (subdirectory in backup repo)
+# Project name (subdirectory in backup repo)
 # Default: current directory name
 # SAFE_PROJECT_NAME=my-project
 
-# OPTIONAL: Custom commit message template
+# Custom commit message template
 # Available variables: $PROJECT, $DATE, $FILES
 # SAFE_COMMIT_MSG="Backup $PROJECT: $DATE"
 EOF
@@ -101,8 +200,8 @@ EOF
     log_success "Created ${config_path}"
     echo ""
     echo "Next steps:"
-    echo "  1. Create a PRIVATE repository for your backups"
-    echo "  2. Edit ${CONFIG_FILE} and set SAFE_REMOTE"
+    echo "  1. Edit ${CONFIG_FILE} if you need project-specific settings"
+    echo "  2. Or set up global config: safe-gitignore config --init"
     echo "  3. Run 'safe-gitignore install' to enable automatic backups"
     echo ""
     echo "Don't forget to add #safe tags to your .gitignore:"
@@ -117,14 +216,14 @@ cmd_install() {
 
     # Check for config
     if ! has_config; then
-        die "No configuration found. Run 'safe-gitignore init' first."
+        die "No configuration found. Run 'safe-gitignore config --init' first."
     fi
 
     # Validate remote is configured
     local remote
     remote=$(read_config "SAFE_REMOTE" "")
     if [[ -z "$remote" ]] || [[ "$remote" == *"YOUR_USERNAME"* ]]; then
-        die "SAFE_REMOTE not configured. Edit ${CONFIG_FILE} first."
+        die "SAFE_REMOTE not configured. Run 'safe-gitignore config --edit' to set it."
     fi
 
     # Create hooks directory if it doesn't exist
@@ -254,14 +353,14 @@ cmd_backup() {
 
     # Check configuration
     if ! has_config; then
-        $quiet || log_error "No configuration found. Run 'safe-gitignore init' first."
+        $quiet || log_error "No configuration found. Run 'safe-gitignore config --init' first."
         return 1
     fi
 
     local remote
     remote=$(read_config "SAFE_REMOTE" "")
     if [[ -z "$remote" ]] || [[ "$remote" == *"YOUR_USERNAME"* ]]; then
-        $quiet || log_error "SAFE_REMOTE not configured. Edit ${CONFIG_FILE} first."
+        $quiet || log_error "SAFE_REMOTE not configured. Run 'safe-gitignore config --edit' to set it."
         return 1
     fi
 
@@ -399,6 +498,9 @@ main() {
             ;;
         backup)
             cmd_backup "$@"
+            ;;
+        config)
+            cmd_config "$@"
             ;;
         version|--version|-v)
             cmd_version
