@@ -1,0 +1,3 @@
+# Empty gitignore - no #safe tags
+node_modules/
+*.log

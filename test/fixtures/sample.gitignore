@@ -1,0 +1,21 @@
+# Sample .gitignore for testing
+
+# Files to backup (tagged with #safe)
+.env #safe
+config/secrets.yml #safe
+*.key #safe
+
+# Files ignored but NOT backed up (no tag)
+node_modules/
+*.log
+.cache/
+
+# Edge cases
+.credentials    #safe
+some/deep/path/secret.json #safe
+
+# Comment line with safe in it (should NOT match)
+# this is #safe but just a comment
+
+# Empty pattern (should be ignored)
+ #safe

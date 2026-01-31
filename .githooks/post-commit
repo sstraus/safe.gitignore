@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Git post-commit hook - template for safe-gitignore
+# This file serves as a reference for the hook that gets installed
+
+# Run backup silently; don't block commits on failure
+safe-gitignore backup --quiet || true

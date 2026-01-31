@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+# safe-gitignore - Backup sensitive gitignored files to a private repository
+# https://github.com/stefano/safe.gitignore
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+# Find the script's directory to source common.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# Source common functions
+# shellcheck disable=SC1091
+source "${LIB_DIR}/common.sh"
+
+# ============================================================================
+# Commands
+# ============================================================================
+
+cmd_version() {
+    echo "safe-gitignore version ${VERSION}"
+}
+
+cmd_help() {
+    cat << 'EOF'
+safe-gitignore - Backup sensitive gitignored files to a private repository
+
+USAGE:
+    safe-gitignore <command> [options]
+
+COMMANDS:
+    init        Initialize configuration file in current repository
+    install     Install post-commit hook in current repository
+    uninstall   Remove post-commit hook from current repository
+    status      Show files that would be backed up (dry run)
+    backup      Manually trigger a backup
+    version     Show version information
+    help        Show this help message
+
+CONFIGURATION:
+    Create .safe-gitignore.conf in your project root:
+
+        SAFE_REMOTE=git@github.com:username/secrets-backup.git
+        SAFE_PROJECT_NAME=my-project  # optional
+        SAFE_COMMIT_MSG="Backup \$PROJECT: \$DATE"  # optional
+
+GITIGNORE SYNTAX:
+    Add #safe tag to any .gitignore line to mark it for backup:
+
+        .env #safe
+        config/secrets.yml #safe
+        *.key #safe
+
+EXAMPLES:
+    # Set up in a new project
+    cd my-project
+    safe-gitignore init
+    # Edit .safe-gitignore.conf with your backup repo URL
+    safe-gitignore install
+
+    # Check what would be backed up
+    safe-gitignore status
+
+    # Manual backup (also happens automatically on commit)
+    safe-gitignore backup
+
+For more information, visit: https://github.com/stefano/safe.gitignore
+EOF
+}
+
+cmd_init() {
+    require_git_repo
+    local git_root
+    git_root=$(get_git_root)
+    local config_path="${git_root}/${CONFIG_FILE}"
+
+    if [[ -f "$config_path" ]]; then
+        log_warn "Configuration file already exists: ${config_path}"
+        echo "Edit it manually or delete it to reinitialize."
+        return 1
+    fi
+
+    cat > "$config_path" << 'EOF'
+# safe-gitignore configuration
+# See: https://github.com/stefano/safe.gitignore
+
+# REQUIRED: Remote repository URL for backups (SSH recommended)
+# Create a PRIVATE repository first, then set its URL here
+SAFE_REMOTE=git@github.com:YOUR_USERNAME/YOUR_REPO.git
+
+# OPTIONAL: Project name (subdirectory in backup repo)
+# Default: current directory name
+# SAFE_PROJECT_NAME=my-project
+
+# OPTIONAL: Custom commit message template
+# Available variables: $PROJECT, $DATE, $FILES
+# SAFE_COMMIT_MSG="Backup $PROJECT: $DATE"
+EOF
+
+    log_success "Created ${config_path}"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Create a PRIVATE repository for your backups"
+    echo "  2. Edit ${CONFIG_FILE} and set SAFE_REMOTE"
+    echo "  3. Run 'safe-gitignore install' to enable automatic backups"
+    echo ""
+    echo "Don't forget to add #safe tags to your .gitignore:"
+    echo "  .env #safe"
+    echo "  config/secrets.yml #safe"
+}
+
+cmd_install() {
+    require_git_repo
+    local git_root
+    git_root=$(get_git_root)
+
+    # Check for config
+    if ! has_config; then
+        die "No configuration found. Run 'safe-gitignore init' first."
+    fi
+
+    # Validate remote is configured
+    local remote
+    remote=$(read_config "SAFE_REMOTE" "")
+    if [[ -z "$remote" ]] || [[ "$remote" == *"YOUR_USERNAME"* ]]; then
+        die "SAFE_REMOTE not configured. Edit ${CONFIG_FILE} first."
+    fi
+
+    # Create hooks directory if it doesn't exist
+    local hooks_dir="${git_root}/.git/hooks"
+    mkdir -p "$hooks_dir"
+
+    local hook_path="${hooks_dir}/post-commit"
+
+    # Check for existing hook
+    if [[ -f "$hook_path" ]]; then
+        if grep -q "safe-gitignore" "$hook_path"; then
+            log_warn "safe-gitignore hook already installed"
+            return 0
+        else
+            log_warn "Existing post-commit hook found"
+            echo "Appending safe-gitignore to existing hook..."
+            echo "" >> "$hook_path"
+            echo "# safe-gitignore backup hook" >> "$hook_path"
+            echo "safe-gitignore backup --quiet || true" >> "$hook_path"
+        fi
+    else
+        # Create new hook
+        cat > "$hook_path" << 'EOF'
+#!/usr/bin/env bash
+# Git post-commit hook - managed by safe-gitignore
+
+# Run backup (silently, don't block on failure)
+safe-gitignore backup --quiet || true
+EOF
+        chmod +x "$hook_path"
+    fi
+
+    log_success "Installed post-commit hook"
+    echo ""
+    echo "Sensitive files marked with #safe in .gitignore will now be"
+    echo "automatically backed up after each commit."
+}
+
+cmd_uninstall() {
+    require_git_repo
+    local git_root
+    git_root=$(get_git_root)
+    local hook_path="${git_root}/.git/hooks/post-commit"
+
+    if [[ ! -f "$hook_path" ]]; then
+        log_info "No post-commit hook found"
+        return 0
+    fi
+
+    if ! grep -q "safe-gitignore" "$hook_path"; then
+        log_info "safe-gitignore hook not installed"
+        return 0
+    fi
+
+    # Check if hook only contains our code
+    local line_count
+    line_count=$(grep -v "^#" "$hook_path" | grep -v "^$" | grep -v "safe-gitignore" | wc -l)
+
+    if [[ "$line_count" -eq 0 ]]; then
+        # Safe to remove entirely
+        rm "$hook_path"
+        log_success "Removed post-commit hook"
+    else
+        # Remove just our lines
+        local tmp_file
+        tmp_file=$(mktemp)
+        grep -v "safe-gitignore" "$hook_path" > "$tmp_file"
+        mv "$tmp_file" "$hook_path"
+        log_success "Removed safe-gitignore from post-commit hook"
+    fi
+}
+
+cmd_status() {
+    require_git_repo
+
+    local files
+    files=$(get_safe_files)
+
+    if [[ -z "$files" ]]; then
+        log_info "No files marked with #safe in .gitignore"
+        echo ""
+        echo "To mark files for backup, add #safe to lines in .gitignore:"
+        echo "  .env #safe"
+        echo "  config/secrets.yml #safe"
+        return 0
+    fi
+
+    echo "Files marked for backup:"
+    echo ""
+    while IFS= read -r file; do
+        if [[ -f "$(get_git_root)/${file}" ]]; then
+            echo "  ${GREEN}✓${NC} ${file}"
+        else
+            echo "  ${YELLOW}○${NC} ${file} (not found)"
+        fi
+    done <<< "$files"
+
+    echo ""
+
+    if has_config; then
+        local remote
+        remote=$(read_config "SAFE_REMOTE" "")
+        local project
+        project=$(get_project_name)
+        echo "Backup destination: ${remote}"
+        echo "Project directory:  ${project}/"
+    else
+        echo "Configuration: not initialized (run 'safe-gitignore init')"
+    fi
+}
+
+cmd_backup() {
+    local quiet=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --quiet|-q)
+                quiet=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    require_git_repo
+
+    # Check configuration
+    if ! has_config; then
+        $quiet || log_error "No configuration found. Run 'safe-gitignore init' first."
+        return 1
+    fi
+
+    local remote
+    remote=$(read_config "SAFE_REMOTE" "")
+    if [[ -z "$remote" ]] || [[ "$remote" == *"YOUR_USERNAME"* ]]; then
+        $quiet || log_error "SAFE_REMOTE not configured. Edit ${CONFIG_FILE} first."
+        return 1
+    fi
+
+    # Get files to backup
+    local git_root
+    git_root=$(get_git_root)
+    local files
+    files=$(get_safe_files)
+
+    if [[ -z "$files" ]]; then
+        $quiet || log_info "No files to backup"
+        return 0
+    fi
+
+    # Filter to only existing files
+    local existing_files=""
+    while IFS= read -r file; do
+        if [[ -f "${git_root}/${file}" ]]; then
+            existing_files="${existing_files}${file}"$'\n'
+        fi
+    done <<< "$files"
+    existing_files="${existing_files%$'\n'}"
+
+    if [[ -z "$existing_files" ]]; then
+        $quiet || log_info "No files to backup (patterns matched but files don't exist)"
+        return 0
+    fi
+
+    # Get or create backup working directory
+    local backup_dir
+    backup_dir=$(get_backup_workdir)
+
+    # Clone or update backup repo
+    if [[ ! -d "${backup_dir}/.git" ]]; then
+        $quiet || log_info "Cloning backup repository..."
+        mkdir -p "$(dirname "$backup_dir")"
+        if ! git clone --quiet "$remote" "$backup_dir" 2>/dev/null; then
+            # Repo might be empty - initialize it
+            mkdir -p "$backup_dir"
+            cd "$backup_dir"
+            git init --quiet
+            git remote add origin "$remote"
+            # Create initial commit
+            echo "# Safe Gitignore Backup" > README.md
+            echo "" >> README.md
+            echo "This repository contains automated backups of sensitive files." >> README.md
+            echo "Managed by [safe-gitignore](https://github.com/stefano/safe.gitignore)" >> README.md
+            git add README.md
+            git commit --quiet -m "Initial commit"
+            git branch -M main
+            git push --quiet -u origin main 2>/dev/null || true
+            cd - > /dev/null
+        fi
+    else
+        # Pull latest
+        cd "$backup_dir"
+        git pull --quiet --rebase 2>/dev/null || true
+        cd - > /dev/null
+    fi
+
+    # Get project subdirectory
+    local project_name
+    project_name=$(get_project_name)
+    local project_dir="${backup_dir}/${project_name}"
+    mkdir -p "$project_dir"
+
+    # Copy files preserving directory structure
+    local files_copied=0
+    while IFS= read -r file; do
+        local src="${git_root}/${file}"
+        local dest="${project_dir}/${file}"
+
+        # Create parent directories
+        mkdir -p "$(dirname "$dest")"
+
+        # Copy file
+        cp "$src" "$dest"
+        ((files_copied++))
+    done <<< "$existing_files"
+
+    # Commit and push
+    cd "$backup_dir"
+
+    # Check if there are changes
+    if [[ -z $(git status --porcelain) ]]; then
+        $quiet || log_info "No changes to backup"
+        cd - > /dev/null
+        return 0
+    fi
+
+    # Stage all changes in project directory
+    git add "${project_name}/"
+
+    # Create commit message
+    local date_str
+    date_str=$(date '+%Y-%m-%d %H:%M:%S')
+    local commit_msg
+    commit_msg=$(read_config "SAFE_COMMIT_MSG" "Backup \$PROJECT: \$DATE")
+    commit_msg="${commit_msg//\$PROJECT/$project_name}"
+    commit_msg="${commit_msg//\$DATE/$date_str}"
+    commit_msg="${commit_msg//\$FILES/$files_copied}"
+
+    git commit --quiet -m "$commit_msg"
+
+    # Push to remote
+    if git push --quiet 2>/dev/null; then
+        $quiet || log_success "Backed up ${files_copied} file(s) to ${remote}"
+    else
+        $quiet || log_warn "Backup committed locally but push failed (will retry on next backup)"
+    fi
+
+    cd - > /dev/null
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    local command="${1:-help}"
+    shift || true
+
+    case "$command" in
+        init)
+            cmd_init "$@"
+            ;;
+        install)
+            cmd_install "$@"
+            ;;
+        uninstall)
+            cmd_uninstall "$@"
+            ;;
+        status)
+            cmd_status "$@"
+            ;;
+        backup)
+            cmd_backup "$@"
+            ;;
+        version|--version|-v)
+            cmd_version
+            ;;
+        help|--help|-h)
+            cmd_help
+            ;;
+        *)
+            log_error "Unknown command: ${command}"
+            echo "Run 'safe-gitignore help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
