@@ -84,6 +84,7 @@ export PATH="$HOME/.local/bin:$PATH"
 | `safe-gitignore uninstall` | Remove post-commit hook |
 | `safe-gitignore status` | Show files that would be backed up |
 | `safe-gitignore backup` | Manually trigger a backup |
+| `safe-gitignore encrypt-setup` | Set up git-crypt encryption in backup repo |
 | `safe-gitignore help` | Show help |
 
 ## Configuration
@@ -139,11 +140,35 @@ secrets-backup/
 
 Each project gets its own subdirectory, preserving the original file structure.
 
+## Encryption (Optional)
+
+For additional security, encrypt your backup repository with git-crypt:
+
+```bash
+# Set up encryption (one-time)
+safe-gitignore encrypt-setup
+
+# Add yourself as a trusted GPG user
+cd ~/.cache/safe-gitignore/<your-backup-repo>
+git-crypt add-gpg-user YOUR_GPG_KEY_ID
+```
+
+All files (except README.md) will be encrypted. To access backups on another machine:
+
+```bash
+# With GPG key
+git clone <backup-repo> && cd <backup-repo>
+git-crypt unlock
+
+# Or with symmetric key
+git-crypt unlock /path/to/exported.key
+```
+
 ## Security Notes
 
 - **Use SSH keys** for authentication (don't store passwords)
 - **Keep your backup repo private**
-- Files are stored as-is (not encrypted). For encryption, use a tool like `git-crypt` on the backup repo
+- **Enable encryption** with `safe-gitignore encrypt-setup` for sensitive data
 - The hook runs silently; check `safe-gitignore status` to verify what's being backed up
 
 ## How It Works

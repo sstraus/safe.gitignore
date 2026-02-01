@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Find the script's directory to source common.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,14 +30,15 @@ USAGE:
     safe-gitignore <command> [options]
 
 COMMANDS:
-    init        Initialize configuration file in current repository
-    install     Install post-commit hook in current repository
-    uninstall   Remove post-commit hook from current repository
-    status      Show files that would be backed up (dry run)
-    backup      Manually trigger a backup
-    config      Manage global configuration
-    version     Show version information
-    help        Show this help message
+    init           Initialize configuration file in current repository
+    install        Install post-commit hook in current repository
+    uninstall      Remove post-commit hook from current repository
+    status         Show files that would be backed up (dry run)
+    backup         Manually trigger a backup
+    config         Manage global configuration
+    encrypt-setup  Set up git-crypt encryption in backup repository
+    version        Show version information
+    help           Show this help message
 
 CONFIGURATION:
     Global config (~/.config/safe-gitignore/config):
@@ -475,6 +476,106 @@ cmd_backup() {
     cd - > /dev/null
 }
 
+cmd_encrypt_setup() {
+    # Check for git-crypt
+    if ! command -v git-crypt &> /dev/null; then
+        die "git-crypt is not installed. Install it first:
+  macOS:   brew install git-crypt
+  Ubuntu:  sudo apt install git-crypt
+  Arch:    sudo pacman -S git-crypt"
+    fi
+
+    # Check configuration
+    if ! has_config; then
+        die "No configuration found. Run 'safe-gitignore config --init' first."
+    fi
+
+    local remote
+    remote=$(read_config "SAFE_REMOTE" "")
+    if [[ -z "$remote" ]] || [[ "$remote" == *"YOUR_USERNAME"* ]]; then
+        die "SAFE_REMOTE not configured. Run 'safe-gitignore config --edit' to set it."
+    fi
+
+    # Get backup directory
+    local backup_dir
+    backup_dir=$(get_backup_workdir)
+
+    # Clone if not exists
+    if [[ ! -d "${backup_dir}/.git" ]]; then
+        log_info "Cloning backup repository..."
+        mkdir -p "$(dirname "$backup_dir")"
+        if ! git clone --quiet "$remote" "$backup_dir" 2>/dev/null; then
+            mkdir -p "$backup_dir"
+            cd "$backup_dir"
+            git init --quiet
+            git remote add origin "$remote"
+            echo "# Safe Gitignore Backup" > README.md
+            echo "" >> README.md
+            echo "This repository contains encrypted backups of sensitive files." >> README.md
+            echo "Managed by [safe-gitignore](https://github.com/sstraus/safe.gitignore)" >> README.md
+            git add README.md
+            git commit --quiet -m "Initial commit"
+            git branch -M main
+            cd - > /dev/null
+        fi
+    fi
+
+    cd "$backup_dir"
+
+    # Check if git-crypt is already initialized
+    if [[ -d ".git-crypt" ]]; then
+        log_warn "git-crypt already initialized in backup repository"
+        echo ""
+        echo "To add a GPG user:"
+        echo "  cd ${backup_dir}"
+        echo "  git-crypt add-gpg-user USER_ID"
+        echo ""
+        echo "To export a symmetric key for sharing:"
+        echo "  git-crypt export-key /path/to/key"
+        cd - > /dev/null
+        return 0
+    fi
+
+    log_info "Initializing git-crypt..."
+    git-crypt init
+
+    # Create .gitattributes to encrypt everything except README
+    log_info "Creating .gitattributes..."
+    cat > .gitattributes << 'EOF'
+# Encrypt all files by default
+* filter=git-crypt diff=git-crypt
+
+# Keep these files unencrypted
+.gitattributes !filter !diff
+README.md !filter !diff
+EOF
+
+    git add .gitattributes
+    git commit --quiet -m "Add git-crypt encryption"
+
+    # Try to push
+    if git push --quiet 2>/dev/null; then
+        log_success "git-crypt initialized and pushed"
+    else
+        log_warn "git-crypt initialized locally (push when ready)"
+    fi
+
+    echo ""
+    echo "Encryption is now enabled for your backup repository."
+    echo ""
+    echo "Next steps:"
+    echo "  1. Add yourself as a trusted GPG user:"
+    echo "     cd ${backup_dir}"
+    echo "     git-crypt add-gpg-user YOUR_GPG_KEY_ID"
+    echo ""
+    echo "  2. Or export a symmetric key to share:"
+    echo "     git-crypt export-key ~/safe-gitignore.key"
+    echo ""
+    echo "All future backups will be automatically encrypted."
+
+    cd - > /dev/null
+}
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -501,6 +602,9 @@ main() {
             ;;
         config)
             cmd_config "$@"
+            ;;
+        encrypt-setup)
+            cmd_encrypt_setup "$@"
             ;;
         version|--version|-v)
             cmd_version
