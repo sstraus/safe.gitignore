@@ -1,17 +1,25 @@
 # Edge cases for parser testing
 
 # Whitespace variations
-.env#safe
-.env2 #safe
-.env3  #safe
-.env4	#safe
+# safe
+.env
+#safe
+.env2
+#  safe
+.env3
+#	safe
+.env4
 
 # With trailing whitespace
-.env5 #safe
+# safe
+.env5
 
 # Negation pattern (should still work)
-!important.env #safe
+# safe
+!important.env
 
 # Pattern with special characters
-config[1].json #safe
-data?.txt #safe
+# safe
+config[1].json
+# safe
+data?.txt

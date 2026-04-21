@@ -160,12 +160,12 @@ test_parse_edge_cases() {
     local result
     result=$(parse_safe_patterns "${SCRIPT_DIR}/fixtures/edge-cases.gitignore")
 
-    # Various whitespace
-    assert_contains "$result" ".env" "Should handle no space before #safe"
-    assert_contains "$result" ".env2" "Should handle single space"
-    assert_contains "$result" ".env3" "Should handle double space"
-    assert_contains "$result" ".env4" "Should handle tab"
-    assert_contains "$result" ".env5" "Should handle trailing whitespace"
+    # Various whitespace in the # safe comment
+    assert_contains "$result" ".env" "Should handle '# safe' with single space"
+    assert_contains "$result" ".env2" "Should handle '#safe' without space"
+    assert_contains "$result" ".env3" "Should handle '#  safe' with double space"
+    assert_contains "$result" ".env4" "Should handle '#<tab>safe' with tab"
+    assert_contains "$result" ".env5" "Should handle '# safe' with trailing whitespace"
 
     # Negation
     assert_contains "$result" "!important.env" "Should handle negation patterns"
@@ -173,6 +173,62 @@ test_parse_edge_cases() {
     # Special characters
     assert_contains "$result" "config[1].json" "Should handle brackets"
     assert_contains "$result" "data?.txt" "Should handle question mark"
+}
+
+test_parse_safeignore() {
+    echo "Testing: parse_safe_patterns with .safeignore file"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    # Create a .gitignore (no # safe markers) and a .safeignore
+    cat > "${tmp_dir}/.gitignore" << 'EOF'
+node_modules/
+*.log
+.env
+EOF
+
+    cat > "${tmp_dir}/.safeignore" << 'EOF'
+# Sensitive files to backup
+.env
+config/secrets.yml
+*.key
+EOF
+
+    local result
+    result=$(parse_safe_patterns "${tmp_dir}/.gitignore")
+
+    assert_contains "$result" ".env" "Should find .env from .safeignore"
+    assert_contains "$result" "config/secrets.yml" "Should find config/secrets.yml from .safeignore"
+    assert_contains "$result" "*.key" "Should find *.key from .safeignore"
+    assert_not_contains "$result" "node_modules" "Should NOT include non-safe patterns"
+
+    rm -rf "$tmp_dir"
+}
+
+test_parse_both_sources() {
+    echo "Testing: parse_safe_patterns merges .gitignore and .safeignore"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    cat > "${tmp_dir}/.gitignore" << 'EOF'
+# safe
+.env
+node_modules/
+EOF
+
+    cat > "${tmp_dir}/.safeignore" << 'EOF'
+*.key
+EOF
+
+    local result
+    result=$(parse_safe_patterns "${tmp_dir}/.gitignore")
+
+    assert_contains "$result" ".env" "Should find .env from .gitignore # safe"
+    assert_contains "$result" "*.key" "Should find *.key from .safeignore"
+
+    rm -rf "$tmp_dir"
 }
 
 # ============================================================================
@@ -310,8 +366,10 @@ test_full_workflow() {
 
     # Create .gitignore with #safe tags
     cat > .gitignore << 'EOF'
-.env #safe
-secrets/*.json #safe
+# safe
+.env
+# safe
+secrets/*.json
 node_modules/
 EOF
 
@@ -354,6 +412,12 @@ main() {
     echo ""
 
     test_parse_edge_cases
+    echo ""
+
+    test_parse_safeignore
+    echo ""
+
+    test_parse_both_sources
     echo ""
 
     test_read_config

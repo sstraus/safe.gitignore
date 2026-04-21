@@ -8,17 +8,37 @@ Your `.gitignore` excludes sensitive files like `.env`, API keys, and config fil
 
 ## The Solution
 
-**safe-gitignore** adds a post-commit hook that automatically syncs files tagged with `#safe` in your `.gitignore` to a private backup repository.
+**safe-gitignore** adds a post-commit hook that automatically syncs sensitive files to a private backup repository. Mark which files to backup using either method:
+
+### Option 1: `# safe` comments in `.gitignore`
+
+Add a `# safe` comment on the line above the pattern:
 
 ```gitignore
 # .gitignore
-.env #safe
-config/secrets.yml #safe
-*.key #safe
+# safe
+.env
+# safe
+config/secrets.yml
+# safe
+*.key
 node_modules/
 ```
 
-Every time you commit, files tagged with `#safe` are silently backed up.
+### Option 2: `.safeignore` file
+
+Create a `.safeignore` file listing the patterns to backup (same syntax as `.gitignore`):
+
+```
+# .safeignore
+.env
+config/secrets.yml
+*.key
+```
+
+Both methods can be used together — patterns are merged and deduplicated.
+
+Every time you commit, marked files are silently backed up.
 
 ## Installation
 
@@ -57,11 +77,21 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Per-project setup
 
-1. **Tag files in your `.gitignore`:**
+1. **Mark files for backup** using either method:
+
+   In `.gitignore`:
    ```gitignore
-   .env #safe
-   config/database.yml #safe
-   credentials.json #safe
+   # safe
+   .env
+   # safe
+   config/database.yml
+   ```
+
+   Or in `.safeignore`:
+   ```
+   .env
+   config/database.yml
+   credentials.json
    ```
 
 2. **Install the hook:**
@@ -175,11 +205,32 @@ git-crypt unlock /path/to/exported.key
 
 1. You commit code in your project
 2. Git's post-commit hook triggers
-3. safe-gitignore parses `.gitignore` for `#safe` tags
-4. Tagged files are copied to a local cache
+3. safe-gitignore parses `.gitignore` for `# safe` markers and reads `.safeignore`
+4. Matched files are copied to a local cache
 5. Changes are committed and pushed to your backup repo
 
 The backup happens silently in the background. Network failures don't block your workflow—changes queue up for the next commit.
+
+## Migration from v1.x
+
+If you used the old inline `#safe` syntax (e.g., `.env #safe`), you need to update your `.gitignore` files. The old syntax was not valid git — git treated `.env #safe` as a literal pattern, meaning your files were **not actually being ignored**.
+
+**Before (broken):**
+```gitignore
+.env #safe
+```
+
+**After (option A — comment above):**
+```gitignore
+# safe
+.env
+```
+
+**After (option B — separate file):**
+```
+# .safeignore
+.env
+```
 
 ## Troubleshooting
 

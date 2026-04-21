@@ -22,7 +22,7 @@ fi
 # Configuration
 CONFIG_FILE=".safe-gitignore.conf"
 GLOBAL_CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/safe-gitignore/config"
-SAFE_TAG="#safe"
+SAFE_TAG="# safe"
 
 # Logging functions
 log_info() {
@@ -95,29 +95,58 @@ read_config() {
     echo "${value:-$default}"
 }
 
-# Parse .gitignore and extract patterns tagged with #safe
-# Output: one pattern per line (without the #safe tag)
-parse_safe_patterns() {
+# Parse .gitignore for patterns marked with a preceding "# safe" comment
+parse_safe_patterns_from_gitignore() {
     local gitignore_path="$1"
 
     if [[ ! -f "$gitignore_path" ]]; then
         return 0
     fi
 
-    # Extract lines ending with #safe, remove the tag and trailing whitespace
+    local next_is_safe=false
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip empty lines and comment-only lines
-        [[ -z "$line" ]] && continue
-        [[ "$line" =~ ^[[:space:]]*# ]] && ! [[ "$line" =~ \#safe[[:space:]]*$ ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*#[[:space:]]*safe[[:space:]]*$ ]]; then
+            next_is_safe=true
+            continue
+        fi
 
-        # Check if line ends with #safe
-        if [[ "$line" =~ ^(.+)[[:space:]]*\#safe[[:space:]]*$ ]]; then
-            local pattern="${BASH_REMATCH[1]}"
-            # Trim trailing whitespace from pattern
+        if $next_is_safe; then
+            next_is_safe=false
+            [[ -z "$line" ]] && continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            local pattern="$line"
             pattern="${pattern%"${pattern##*[![:space:]]}"}"
-            echo "$pattern"
+            [[ -n "$pattern" ]] && echo "$pattern"
         fi
     done < "$gitignore_path"
+}
+
+# Parse .safeignore file (one pattern per line, like .gitignore syntax)
+parse_safe_patterns_from_safeignore() {
+    local safeignore_path="$1"
+
+    if [[ ! -f "$safeignore_path" ]]; then
+        return 0
+    fi
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        local pattern="$line"
+        pattern="${pattern%"${pattern##*[![:space:]]}"}"
+        [[ -n "$pattern" ]] && echo "$pattern"
+    done < "$safeignore_path"
+}
+
+# Unified entry point: merges patterns from .gitignore (# safe comments) and .safeignore
+parse_safe_patterns() {
+    local gitignore_path="$1"
+    local safeignore_path="${gitignore_path%/*}/.safeignore"
+
+    {
+        parse_safe_patterns_from_gitignore "$gitignore_path"
+        parse_safe_patterns_from_safeignore "$safeignore_path"
+    } | sort -u
 }
 
 # Find files matching a gitignore-style pattern

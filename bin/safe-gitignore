@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="2.0.0"
 
 # Find the script's directory to source common.sh
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,12 +53,19 @@ CONFIGURATION:
         SAFE_PROJECT_NAME=my-project  # optional
         SAFE_COMMIT_MSG="Backup \$PROJECT: \$DATE"  # optional
 
-GITIGNORE SYNTAX:
-    Add #safe tag to any .gitignore line to mark it for backup:
+MARKING FILES FOR BACKUP:
+    Option 1: Add a "# safe" comment above the line in .gitignore:
 
-        .env #safe
-        config/secrets.yml #safe
-        *.key #safe
+        # safe
+        .env
+        # safe
+        config/secrets.yml
+
+    Option 2: Create a .safeignore file with patterns to backup:
+
+        .env
+        config/secrets.yml
+        *.key
 
 EXAMPLES:
     # Set up global config (once)
@@ -205,9 +212,11 @@ EOF
     echo "  2. Or set up global config: safe-gitignore config --init"
     echo "  3. Run 'safe-gitignore install' to enable automatic backups"
     echo ""
-    echo "Don't forget to add #safe tags to your .gitignore:"
-    echo "  .env #safe"
-    echo "  config/secrets.yml #safe"
+    echo "Mark files for backup in your .gitignore:"
+    echo "  # safe"
+    echo "  .env"
+    echo ""
+    echo "Or create a .safeignore file with patterns to backup."
 }
 
 cmd_install() {
@@ -259,8 +268,8 @@ EOF
 
     log_success "Installed post-commit hook"
     echo ""
-    echo "Sensitive files marked with #safe in .gitignore will now be"
-    echo "automatically backed up after each commit."
+    echo "Sensitive files marked in .gitignore (with '# safe' comment) or"
+    echo "listed in .safeignore will be automatically backed up after each commit."
 }
 
 cmd_uninstall() {
@@ -304,11 +313,13 @@ cmd_status() {
     files=$(get_safe_files)
 
     if [[ -z "$files" ]]; then
-        log_info "No files marked with #safe in .gitignore"
+        log_info "No files marked for backup"
         echo ""
-        echo "To mark files for backup, add #safe to lines in .gitignore:"
-        echo "  .env #safe"
-        echo "  config/secrets.yml #safe"
+        echo "To mark files, add '# safe' above the line in .gitignore:"
+        echo "  # safe"
+        echo "  .env"
+        echo ""
+        echo "Or create a .safeignore file with patterns to backup."
         return 0
     fi
 
